@@ -73,13 +73,25 @@ if __name__ == '__main__':
         sum_psnr = 0
         sum_ssim = 0
         test_size = 0
-        filePath = 'E:/python/Zero-DCE-master/Zero-DCE_code/data/eval15/'
+        filePath = 'E:/python/Zero-DCE-master/Zero-DCE_code/data/Lol_v2_test/'
         file_name = 'low'
         label_name = 'high'
         test_list = glob.glob(filePath + file_name + "/*")
+        dataset_name = 'Lol_v2_test'
 
         for image in test_list:
-            image_label = image.replace(file_name, label_name)
+            image_label = "" 
+            # for lol v2 
+            if(dataset_name == 'Lol_v2_test'):
+                # Get just the filename (e.g., low00690.png)
+                filename = os.path.basename(image)
+                
+                # Construct new label path using label_name and filename
+                image_label = os.path.join(filePath, label_name, filename.replace('low', 'normal', 1))
+            elif (dataset_name == 'Lol_v1_test') :
+                # for lol v1 
+                image_label = image.replace(file_name, label_name)
+            
             psnr, ssim = lowlight(image, image_label)
             test_size += 1
             sum_psnr += psnr
@@ -119,7 +131,7 @@ if __name__ == '__main__':
 # # test_images
 # 	with torch.no_grad():
 # 		filePath = 'E:/python/Zero-DCE-master/Zero-DCE_code/data/test_data/'
-	
+    
 # 		file_list = os.listdir(filePath)
 
 # 		for file_name in file_list:
