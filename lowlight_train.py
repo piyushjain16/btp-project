@@ -16,6 +16,10 @@ from PIL import Image
 from skimage.metrics import structural_similarity as SSIM
 from math import log10, sqrt
 import glob
+import logging
+
+logging.basicConfig(filename="gamma_DCE.log", filemode="a", format="%(levelname)s: %(message)s",level=logging.INFO)
+logger=logging.getLogger()
 
 torch.autograd.set_detect_anomaly(True)
  
@@ -55,12 +59,12 @@ def lowlight(image_path, label_path,DCE_net):
 	# print("PSNR :", psnr, " SSIM :", ssim)
 	return psnr, ssim
 
-def test_lowlightimage(DCE_net):
+def test_lowlightimage(DCE_net,config,epoch):
 	with torch.no_grad():
 		sum_psnr = 0
 		sum_ssim = 0
 		test_size = 0
-		filePath = '/content/Zero-DCE/Zero-DCE_code/data/eval15/'
+		filePath = config.test_image_path
 		file_name = 'low'
 		label_name = 'high'
 		test_list = glob.glob(filePath + file_name + "/*")
@@ -71,7 +75,7 @@ def test_lowlightimage(DCE_net):
 			test_size += 1
 			sum_psnr += psnr
 			sum_ssim += ssim
-		
+		logger.info("Epoch :"+ str(epoch) +", PSNR :" + str(sum_psnr / test_size) + ", SSIM :" + str(sum_ssim / test_size))
 		print("avg PSNR :", sum_psnr / test_size, " avg SSIM:", sum_ssim / test_size)
 
 def weights_init(m):
@@ -114,7 +118,7 @@ def train(config):
 
 			img_lowlight = img_lowlight.cuda()
 
-			enhanced_image_1,enhanced_image,A  = DCE_net(img_lowlight)
+			enhanced_image,A  = DCE_net(img_lowlight)
 
 			Loss_TV = 200*L_TV(A)
 			
@@ -136,10 +140,11 @@ def train(config):
 			optimizer.step()
 
 			if ((iteration+1) % config.display_iter) == 0:
-				print("Loss at iteration", iteration+1, ":", loss.item())
+				logger.info("Epoch :"+ str(epoch) +", Loss at iteration" + str(iteration+1) + ":" + str(loss.item()))
+				print("Loss at iteration ", iteration+1, " : ", loss.item())
 			if ((iteration+1) % config.snapshot_iter) == 0:
 				torch.save(DCE_net.state_dict(), config.snapshots_folder + "Epoch" + str(epoch) + '.pth')
-	test_lowlightimage(DCE_net) 		
+		test_lowlightimage(DCE_net,config,epoch) 		
 
 
 
@@ -159,15 +164,15 @@ if __name__ == "__main__":
 	parser.add_argument('--num_workers', type=int, default=4)
 	parser.add_argument('--display_iter', type=int, default=10)
 	parser.add_argument('--snapshot_iter', type=int, default=10)
-	parser.add_argument('--snapshots_folder', type=str, default="snapshots/")
+	parser.add_argument('--snapshots_folder', type=str, default="E:/python/Zero-DCE-master/Zero-DCE_code/snapshots_gamma_DCE/")
 	parser.add_argument('--load_pretrain', type=bool, default= False)
+	parser.add_argument('--test_image_path', type=str, default= "E:/python/Zero-DCE-master/Zero-DCE_code/data/Lol_v1_test/")
 	parser.add_argument('--pretrain_dir', type=str, default= "snapshots/Epoch99.pth")
 
 	config = parser.parse_args()
 
 	if not os.path.exists(config.snapshots_folder):
 		os.mkdir(config.snapshots_folder)
-
 
 	train(config)
 
