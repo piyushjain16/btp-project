@@ -8,7 +8,8 @@ import sys
 import argparse
 import time
 import dataloader
-import model
+# import model
+import retinex_gamma
 import Myloss
 import numpy as np
 from torchvision import transforms
@@ -16,6 +17,10 @@ from PIL import Image
 from skimage.metrics import structural_similarity as SSIM
 from math import log10, sqrt
 import glob
+import logging
+
+logging.basicConfig(filename="gamma_DCE.log", filemode="a", format="%(levelname)s: %(message)s",level=logging.INFO)
+logger=logging.getLogger()
 
 torch.autograd.set_detect_anomaly(True)
  
@@ -27,7 +32,7 @@ def PSNR(original, compressed):
 	psnr = 20 * log10(max_pixel / sqrt(mse)) 
 	return psnr
 
-def lowlight(image_path, label_path,DCE_net):
+def lowlight(image_path, label_path,ML_model):
 	os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 	data_lowlight = Image.open(image_path)
 	label_lowlight = Image.open(label_path)
@@ -39,7 +44,7 @@ def lowlight(image_path, label_path,DCE_net):
 	label_lowlight = (np.asarray(label_lowlight) / 255.0)
 	label_lowlight = torch.from_numpy(label_lowlight).float().permute(2, 0, 1).unsqueeze(0).cuda()
   
-	enhanced_image, _ = DCE_net(data_lowlight)
+	_, _, _, _,enhanced_image = ML_model(data_lowlight)
 	
 	# Remove batch dimension and convert to numpy (H, W, C) format
 	enhanced_imagenp = enhanced_image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
@@ -55,23 +60,23 @@ def lowlight(image_path, label_path,DCE_net):
 	# print("PSNR :", psnr, " SSIM :", ssim)
 	return psnr, ssim
 
-def test_lowlightimage(DCE_net):
+def test_lowlightimage(ML_model,config,epoch):
 	with torch.no_grad():
 		sum_psnr = 0
 		sum_ssim = 0
 		test_size = 0
-		filePath = '/content/Zero-DCE/Zero-DCE_code/data/eval15/'
+		filePath = config.test_image_path
 		file_name = 'low'
 		label_name = 'high'
 		test_list = glob.glob(filePath + file_name + "/*")
 
 		for image in test_list:
 			image_label = image.replace(file_name, label_name)
-			psnr, ssim = lowlight(image, image_label,DCE_net)
+			psnr, ssim = lowlight(image, image_label,ML_model)
 			test_size += 1
 			sum_psnr += psnr
 			sum_ssim += ssim
-		
+		logger.info("Epoch : "+ str(epoch) +", PSNR : " + str(sum_psnr / test_size) + ", SSIM : " + str(sum_ssim / test_size))
 		print("avg PSNR :", sum_psnr / test_size, " avg SSIM:", sum_ssim / test_size)
 
 def weights_init(m):
@@ -87,11 +92,12 @@ def train(config):
 
 	os.environ['CUDA_VISIBLE_DEVICES']='0'
 
-	DCE_net = model.enhance_net_nopool().cuda()
+	# DCE_net = model.enhance_net_nopool().cuda()
+	retinex_gamma_model = retinex_gamma.FullModel().cuda()
 
-	DCE_net.apply(weights_init)
+	retinex_gamma_model.apply(weights_init)
 	if config.load_pretrain == True:
-		DCE_net.load_state_dict(torch.load(config.pretrain_dir))
+		retinex_gamma_model.load_state_dict(torch.load(config.pretrain_dir))
 	train_dataset = dataloader.lowlight_loader(config.lowlight_images_path)		
 	
 	train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config.train_batch_size, shuffle=True, num_workers=config.num_workers, pin_memory=True)
@@ -105,18 +111,18 @@ def train(config):
 	L_TV = Myloss.L_TV()
 
 
-	optimizer = torch.optim.Adam(DCE_net.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+	optimizer = torch.optim.Adam(retinex_gamma_model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 	
-	DCE_net.train()
+	retinex_gamma_model.train()
 
 	for epoch in range(config.num_epochs):
 		for iteration, img_lowlight in enumerate(train_loader):
 
 			img_lowlight = img_lowlight.cuda()
 
-			enhanced_image_1,enhanced_image,A  = DCE_net(img_lowlight)
+			R, I, out, gamma,enhanced_image = retinex_gamma_model(img_lowlight)
 
-			Loss_TV = 200*L_TV(A)
+			Loss_TV = 200*L_TV(gamma)
 			
 			loss_spa = torch.mean(L_spa(enhanced_image, img_lowlight))
 
@@ -132,14 +138,15 @@ def train(config):
 			
 			optimizer.zero_grad()
 			loss.backward()
-			torch.nn.utils.clip_grad_norm(DCE_net.parameters(),config.grad_clip_norm)
+			torch.nn.utils.clip_grad_norm(retinex_gamma_model.parameters(),config.grad_clip_norm)
 			optimizer.step()
 
 			if ((iteration+1) % config.display_iter) == 0:
-				print("Loss at iteration", iteration+1, ":", loss.item())
+				logger.info("Epoch : "+ str(epoch) +", Loss at iteration " + str(iteration+1) + " : " + str(loss.item()))
+				print("Loss at iteration ", iteration+1, " : ", loss.item())
 			if ((iteration+1) % config.snapshot_iter) == 0:
-				torch.save(DCE_net.state_dict(), config.snapshots_folder + "Epoch" + str(epoch) + '.pth')
-	test_lowlightimage(DCE_net) 		
+				torch.save(retinex_gamma_model.state_dict(), config.snapshots_folder + "Epoch" + str(epoch) + '.pth')
+		test_lowlightimage(retinex_gamma_model,config,epoch) 		
 
 
 
@@ -159,15 +166,15 @@ if __name__ == "__main__":
 	parser.add_argument('--num_workers', type=int, default=4)
 	parser.add_argument('--display_iter', type=int, default=10)
 	parser.add_argument('--snapshot_iter', type=int, default=10)
-	parser.add_argument('--snapshots_folder', type=str, default="snapshots/")
+	parser.add_argument('--snapshots_folder', type=str, default="E:/python/Zero-DCE-master/Zero-DCE_code/snapshots_retinex_gamma/")
 	parser.add_argument('--load_pretrain', type=bool, default= False)
+	parser.add_argument('--test_image_path', type=str, default= "E:/python/Zero-DCE-master/Zero-DCE_code/data/Lol_v1_test/")
 	parser.add_argument('--pretrain_dir', type=str, default= "snapshots/Epoch99.pth")
 
 	config = parser.parse_args()
 
 	if not os.path.exists(config.snapshots_folder):
 		os.mkdir(config.snapshots_folder)
-
 
 	train(config)
 
