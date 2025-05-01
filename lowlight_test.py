@@ -8,7 +8,9 @@ import sys
 import argparse
 import time
 import dataloader
-import model
+import gamma_model
+# import model
+# import retinex_gamma
 import numpy as np
 from torchvision import transforms
 from PIL import Image
@@ -40,14 +42,20 @@ def lowlight(image_path, label_path):
     label_lowlight = (np.asarray(label_lowlight) / 255.0)
     label_lowlight = torch.from_numpy(label_lowlight).float().permute(2, 0, 1).unsqueeze(0).cuda()
 
-    DCE_net = model.enhance_net_nopool().cuda()
-    DCE_net.load_state_dict(torch.load('E:/python/Zero-DCE-master/Zero-DCE_code/snapshots/Epoch99.pth', weights_only=True))
+    gamma_net = gamma_model.enhance_net_nopool().cuda()
+    gamma_net.load_state_dict(torch.load('E:\python\Zero-DCE-master\Zero-DCE_code\snapshot_gamma_with_gamma_beta_map_0.4_1.4\Epoch0.pth', weights_only=True))
+    enhanced_image,_ ,_= gamma_net(data_lowlight)
+    # retinex_gamma_model = retinex_gamma.FullModel().cuda()
+    # retinex_gamma_model.load_state_dict(torch.load('E:\python\Zero-DCE-master\Zero-DCE_code\snapshots_retinex_gamma\Epoch2.pth', weights_only=True))
   
-    _,enhanced_image, _ = DCE_net(data_lowlight)
+    # R, I, out, gamma,enhanced_image = retinex_gamma_model(data_lowlight)
     
     # Remove batch dimension and convert to numpy (H, W, C) format
     enhanced_imagenp = enhanced_image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
     label_lowlightnp = label_lowlight.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+    # R = R.squeeze(0).permute(1,2, 0).cpu()
+    # I = I.squeeze(0).permute(1, 2, 0).cpu()
+    # out = out.squeeze(0).permute(1, 2, 0).cpu()
 
     # Ensure the image is in range [0, 255] as uint8
     enhanced_imagenp = (enhanced_imagenp * 255).astype(np.uint8)
@@ -57,14 +65,28 @@ def lowlight(image_path, label_path):
     psnr = PSNR(enhanced_imagenp, label_lowlightnp)
     ssim = SSIM(enhanced_imagenp, label_lowlightnp, win_size=3, multichannel=True)
     print("PSNR :", psnr, " SSIM :", ssim)
-    result_path = image_path.replace('low', 'result')
+    # result_path = image_path.replace('low', 'result_retinex_gamma')
+    # result_path_R = image_path.replace('low', 'result_r')
+    # result_path_I = image_path.replace('low', 'result_i')
+    # result_path_out = image_path.replace('low', 'result_out')
+    result_path = image_path.replace('low', 'result_gamma_with_gamma_beta_map_0.4_1.4_epoch0',1)
+
 
     # Create directory if it doesn't exist
     if not os.path.exists(os.path.dirname(result_path)):
       os.makedirs(os.path.dirname(result_path))
+    # if not os.path.exists(os.path.dirname(result_path_R)):
+    #     os.makedirs(os.path.dirname(result_path_R))
+    # if not os.path.exists(os.path.dirname(result_path_I)):
+    #     os.makedirs(os.path.dirname(result_path_I))
+    # if not os.path.exists(os.path.dirname(result_path_out)):
+    #     os.makedirs(os.path.dirname(result_path_out))
     # Save enhanced image using torchvision
     enhanced_imagenp = enhanced_imagenp.astype(np.float32) / 255.0  # Normalize to [0, 1]
     torchvision.utils.save_image(torch.from_numpy(enhanced_imagenp).permute(2, 0, 1), result_path)
+    # torchvision.utils.save_image(R.permute(2, 0, 1), result_path_R)
+    # torchvision.utils.save_image(I.permute(2, 0, 1), result_path_I)
+    # torchvision.utils.save_image(out.permute(2, 0, 1), result_path_out)
 
     return psnr, ssim
 
@@ -73,13 +95,25 @@ if __name__ == '__main__':
         sum_psnr = 0
         sum_ssim = 0
         test_size = 0
-        filePath = 'E:/python/Zero-DCE-master/Zero-DCE_code/data/eval15/'
+        filePath = 'E:/python/Zero-DCE-master/Zero-DCE_code/data/Lol_v1_test/'
         file_name = 'low'
         label_name = 'high'
         test_list = glob.glob(filePath + file_name + "/*")
+        dataset_name = 'Lol_v1_test'
 
         for image in test_list:
-            image_label = image.replace(file_name, label_name)
+            image_label = "" 
+            # for lol v2 
+            if(dataset_name == 'Lol_v2_test'):
+                # Get just the filename (e.g., low00690.png)
+                filename = os.path.basename(image)
+                
+                # Construct new label path using label_name and filename
+                image_label = os.path.join(filePath, label_name, filename.replace('low', 'normal', 1))
+            elif (dataset_name == 'Lol_v1_test') :
+                # for lol v1 
+                image_label = image.replace(file_name, label_name)
+            
             psnr, ssim = lowlight(image, image_label)
             test_size += 1
             sum_psnr += psnr
@@ -119,7 +153,7 @@ if __name__ == '__main__':
 # # test_images
 # 	with torch.no_grad():
 # 		filePath = 'E:/python/Zero-DCE-master/Zero-DCE_code/data/test_data/'
-	
+    
 # 		file_list = os.listdir(filePath)
 
 # 		for file_name in file_list:
